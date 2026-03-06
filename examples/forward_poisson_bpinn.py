@@ -1,8 +1,14 @@
 """NeuralUQ for 1-D Poisson equation (forward), from B-PINN paper."""
 
 
-# See also this paper for reference: 
+# See also this paper for reference:
 # B-PINNs: Bayesian physics-informed neural networks for forward and inverse PDE problems with noisy data
+
+import os
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
+
+import logging
+logging.getLogger("tensorflow").setLevel(logging.ERROR)
 
 import neuraluq as neuq
 from neuraluq.config import tf
@@ -67,8 +73,8 @@ if __name__ == "__main__":
         likelihoods=[likelihood_u, likelihood_f],
     )
     method = neuq.inferences.HMC(
-        num_samples=1000,
-        num_burnin=1000,
+        num_samples=100,
+        num_burnin=10,
         init_time_step=0.01,
         leapfrog_step=50,
         seed=6666,

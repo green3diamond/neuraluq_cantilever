@@ -1,8 +1,7 @@
-"""NeuralUQ for 1-D Poisson equation (forward), from B-PINN paper."""
+"""NeuralUQ for Euler-Bernoulli cantilever beam — Variational Inference version."""
 
-
-# See also this paper for reference:
-# B-PINNs: Bayesian physics-informed neural networks for forward and inverse PDE problems with noisy data
+# Compare with cantilever_bpinn.py which uses HMC.
+# This uses mean-field VI (optimizes ELBO) instead of MCMC sampling.
 
 import os
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
@@ -17,7 +16,6 @@ from neuraluq.config import tf
 import sys
 import numpy as np
 import numpy.core
-# Monkey-patch: allow unpickling files saved with NumPy 2.x on NumPy 1.x
 if not hasattr(np, '_core'):
     sys.modules['numpy._core'] = np.core
     sys.modules['numpy._core.multiarray'] = np.core.multiarray
@@ -30,7 +28,7 @@ L = 1.0          # beam length
 EI = 1.0         # flexural rigidity
 mu = 1.0         # mass per unit length
 c = 0.0          # damping coefficient
-P = 0          # load amplitude
+P = 0            # load amplitude
 f = 2.4          # forcing frequency
 
 
@@ -42,13 +40,11 @@ def load_data(data_file, select_every_nth=1, number_of_modes=1):
     w_d_full = data['U'].astype(np.float32)
     x_full = data['x'].astype(np.float32)
 
-    # Subsample time
     if select_every_nth > 1:
         indexes_t = list(range(0, len(t_full), select_every_nth))
     else:
         indexes_t = list(range(len(t_full)))
 
-    # Subsample space
     if number_of_modes == 1:
         indexes_x = [0, 50, -1]
     elif number_of_modes == 2:
@@ -62,10 +58,7 @@ def load_data(data_file, select_every_nth=1, number_of_modes=1):
     x = x_full[indexes_x]
     w_d = w_d_full[indexes_x][:, indexes_t]
 
-    # Resolve negative indices for test set computation
     resolved_indexes_x = [i if i >= 0 else len(x_full) + i for i in indexes_x]
-
-    # Test indices = all indices minus training indices minus IC (t=0)
     indexes_x_test = [i for i in range(len(x_full)) if i not in resolved_indexes_x]
     indexes_t_test = [i for i in range(len(t_full)) if i not in indexes_t and i != 0]
 
@@ -78,13 +71,8 @@ def load_data(data_file, select_every_nth=1, number_of_modes=1):
 
 # ── PDE residual: EI * w_xxxx + mu * w_tt + c * w_t - p(x,t) = 0 ────────────
 def pde_fn(xt, w):
-    """Euler-Bernoulli beam PDE residual.
-
-    Input xt has columns [x, t]. Output w is displacement.
-    """
     w_xt = tf.gradients(w, xt)[0]
     w_x, w_t = w_xt[..., 0:1], w_xt[..., 1:2]
-
     w_xx = tf.gradients(w_x, xt)[0][..., 0:1]
     w_xxx = tf.gradients(w_xx, xt)[0][..., 0:1]
     w_xxxx = tf.gradients(w_xxx, xt)[0][..., 0:1]
@@ -94,57 +82,42 @@ def pde_fn(xt, w):
     t_coord = xt[..., 1:2]
     p = -P * tf.sin(np.pi * x_coord / L) * tf.cos(2 * np.pi * f * t_coord)
 
-    residual = EI * w_xxxx + mu * w_tt + c * w_t - p
-    return residual
+    return EI * w_xxxx + mu * w_tt + c * w_t - p
 
 
-# ── BC/IC PDE helpers (return the quantity that should be zero) ───────────────
 def bc_slope_fn(xt, w):
-    """dw/dx — used for clamped end slope BC."""
-    w_x = tf.gradients(w, xt)[0][..., 0:1]
-    return w_x
+    return tf.gradients(w, xt)[0][..., 0:1]
 
 
 def bc_moment_fn(xt, w):
-    """d^2 w/dx^2 — used for free end moment BC."""
     w_x = tf.gradients(w, xt)[0][..., 0:1]
-    w_xx = tf.gradients(w_x, xt)[0][..., 0:1]
-    return w_xx
+    return tf.gradients(w_x, xt)[0][..., 0:1]
 
 
 def bc_shear_fn(xt, w):
-    """d^3 w/dx^3 — used for free end shear BC."""
     w_x = tf.gradients(w, xt)[0][..., 0:1]
     w_xx = tf.gradients(w_x, xt)[0][..., 0:1]
-    w_xxx = tf.gradients(w_xx, xt)[0][..., 0:1]
-    return w_xxx
+    return tf.gradients(w_xx, xt)[0][..., 0:1]
 
 
 def ic_velocity_fn(xt, w):
-    """dw/dt — used for zero initial velocity IC."""
-    w_t = tf.gradients(w, xt)[0][..., 1:2]
-    return w_t
+    return tf.gradients(w, xt)[0][..., 1:2]
 
 
 # ── Collocation / BC / IC point generation ────────────────────────────────────
 def generate_collocation_points(n_pde, n_bc, n_ic, t_start, t_end):
-    """Generate collocation points for PDE, BCs, and ICs within [t_start, t_end]."""
-    # Interior PDE points
     x_pde = np.random.uniform(0, L, (n_pde, 1)).astype(np.float32)
     t_pde = np.random.uniform(t_start, t_end, (n_pde, 1)).astype(np.float32)
     xt_pde = np.concatenate([x_pde, t_pde], axis=-1)
 
-    # Left BC: x=0, clamped (w=0, dw/dx=0)
     t_bc = np.random.uniform(t_start, t_end, (n_bc, 1)).astype(np.float32)
     x_left = np.zeros((n_bc, 1), dtype=np.float32)
     xt_left = np.concatenate([x_left, t_bc], axis=-1)
 
-    # Right BC: x=L, free (d^2w/dx^2=0, d^3w/dx^3=0)
     t_bc_r = np.random.uniform(t_start, t_end, (n_bc, 1)).astype(np.float32)
     x_right = np.full((n_bc, 1), L, dtype=np.float32)
     xt_right = np.concatenate([x_right, t_bc_r], axis=-1)
 
-    # IC: t=t_start
     x_ic = np.random.uniform(0, L, (n_ic, 1)).astype(np.float32)
     t_ic = np.full((n_ic, 1), t_start, dtype=np.float32)
     xt_ic = np.concatenate([x_ic, t_ic], axis=-1)
@@ -152,19 +125,11 @@ def generate_collocation_points(n_pde, n_bc, n_ic, t_start, t_end):
     return xt_pde, xt_left, xt_right, xt_ic
 
 
-def train_interval_pinn(x, t_interval, w_d_interval, x_ic_pts, w_ic_targets,
-                        layers, n_pde, n_bc, n_ic, sigma_data, sigma_pde,
-                        sigma_bc, sigma_ic, num_samples, num_burnin, seed):
-    """Train a B-PINN on a single time interval.
-
-    Args:
-        x: spatial training locations, shape [n_x]
-        t_interval: time points in this interval, shape [n_t_int]
-        w_d_interval: data in this interval, shape [n_x, n_t_int]
-        x_ic_pts: spatial points for IC, shape [n_ic_pts]
-        w_ic_targets: IC displacement targets, shape [n_ic_pts, 1]
-        Returns: (model, process_w, samples, results)
-    """
+def train_interval_vi(x, t_interval, w_d_interval, x_ic_pts, w_ic_targets,
+                      layers, n_pde, n_bc, n_ic, sigma_data, sigma_pde,
+                      sigma_bc, sigma_ic, vi_batch_size, num_samples,
+                      num_iterations):
+    """Train a VI B-PINN on a single time interval."""
     t_start, t_end = t_interval.min(), t_interval.max()
 
     # Flatten data
@@ -184,13 +149,18 @@ def train_interval_pinn(x, t_interval, w_d_interval, x_ic_pts, w_ic_targets,
     t_ic_data = np.full_like(x_ic_data, t_start, dtype=np.float32)
     xt_ic_data = np.concatenate([x_ic_data.astype(np.float32), t_ic_data], axis=-1)
 
-    # Build surrogate and process
-    process_w = neuq.process.Process(
-        surrogate=neuq.surrogates.FNN(layers=layers),
-        prior=neuq.variables.fnn.Samplable(layers=layers, mean=0, sigma=1),
+    # VI requires both prior and variational posterior
+    prior = neuq.variables.fnn.Samplable(layers=layers, mean=0, sigma=1)
+    posterior = neuq.variables.fnn.Variational(
+        layers=layers, mean=0, sigma=0.1, trainable=True,
     )
 
-    # Likelihoods
+    process_w = neuq.process.Process(
+        surrogate=neuq.surrogates.FNN(layers=layers),
+        prior=prior,
+        posterior=posterior,
+    )
+
     likelihoods = [
         neuq.likelihoods.Normal(inputs=xt_data, targets=w_data,
                                 processes=[process_w], pde=None, sigma=sigma_data),
@@ -211,71 +181,70 @@ def train_interval_pinn(x, t_interval, w_d_interval, x_ic_pts, w_ic_targets,
     ]
 
     model = neuq.models.Model(processes=[process_w], likelihoods=likelihoods)
-    method = neuq.inferences.HMC(
-        num_samples=num_samples, num_burnin=num_burnin,
-        init_time_step=0.01, leapfrog_step=50, seed=seed,
+
+    method = neuq.inferences.VI(
+        batch_size=vi_batch_size,
+        num_samples=num_samples,
+        num_iterations=num_iterations,
     )
     model.compile(method)
-    samples, results = model.run()
+    samples = model.run()
 
-    return model, process_w, samples, results
+    return model, process_w, samples
 
 
 if __name__ == "__main__":
     # ── Hyperparameters ───────────────────────────────────────────────────────
-    layers = [2, 50, 50, 50, 1]   # input: (x, t), output: w
-    n_pde = 5000       # collocation points for PDE
-    n_bc = 300         # boundary points per edge
-    n_ic = 100         # initial condition points
-    sigma_data = 0.05  # noise std for data likelihood
-    sigma_pde = 0.01   # noise std for PDE residual likelihood
-    sigma_bc = 0.01    # noise std for BC likelihoods
-    sigma_ic = 0.01    # noise std for IC likelihoods
-    num_samples = 1000
-    num_burnin = 1000
+    layers = [2, 50, 50, 50, 1]
+    n_pde = 5000
+    n_bc = 300
+    n_ic = 100
+    sigma_data = 0.05
+    sigma_pde = 0.01
+    sigma_bc = 0.01
+    sigma_ic = 0.01
+    vi_batch_size = 64       # samples per ELBO estimate
+    num_samples = 1000       # posterior samples after training
+    num_iterations = 10000   # ELBO optimization steps
     n_intervals = 3
 
     # ── Load data ─────────────────────────────────────────────────────────────
     data_file = "test_TC01_M2_L1_EI1_noise001.npy"
-    x, t, w_d, x_test, t_test, w_d_test = load_data(data_file, select_every_nth=2, number_of_modes=2)
+    x, t, w_d, x_test, t_test, w_d_test = load_data(
+        data_file, select_every_nth=2, number_of_modes=2)
 
     n_x_test = len(x_test)
     n_t_test = len(t_test)
 
-    # ── Split time into 3 intervals ──────────────────────────────────────────
+    # ── Split time into intervals ─────────────────────────────────────────────
     t_boundaries = np.linspace(t.min(), t.max(), n_intervals + 1)
     time_intervals = [(t_boundaries[i], t_boundaries[i + 1]) for i in range(n_intervals)]
     print(f"Time intervals: {time_intervals}")
 
-    # IC for first interval comes from data at t=0
     w_ic_next = w_d[:, 0:1].astype(np.float32)
 
-    # Collect predictions across all intervals
     w_mean_full = np.zeros((n_x_test, n_t_test))
     w_std_full = np.zeros((n_x_test, n_t_test))
     models_info = []
 
     for iv, (t_start, t_end) in enumerate(time_intervals):
         print(f"\n{'='*60}")
-        print(f"Interval {iv+1}/{n_intervals}: t ∈ [{t_start:.4f}, {t_end:.4f}]")
+        print(f"Interval {iv+1}/{n_intervals}: t in [{t_start:.4f}, {t_end:.4f}]")
         print(f"{'='*60}")
 
-        # Select training data in this interval
         t_mask = (t >= t_start) & (t <= t_end)
         t_interval = t[t_mask]
         w_d_interval = w_d[:, t_mask]
 
-        # Train B-PINN for this interval
-        model, process_w, samples, results = train_interval_pinn(
+        model, process_w, samples = train_interval_vi(
             x=x, t_interval=t_interval, w_d_interval=w_d_interval,
             x_ic_pts=x, w_ic_targets=w_ic_next,
             layers=layers, n_pde=n_pde, n_bc=n_bc, n_ic=n_ic,
             sigma_data=sigma_data, sigma_pde=sigma_pde,
             sigma_bc=sigma_bc, sigma_ic=sigma_ic,
-            num_samples=num_samples, num_burnin=num_burnin,
-            seed=7777 + iv,
+            vi_batch_size=vi_batch_size, num_samples=num_samples,
+            num_iterations=num_iterations,
         )
-        print(f"Interval {iv+1} acceptance rate: {np.mean(results):.3f}")
 
         # Predict on test points within this interval
         t_test_mask = (t_test >= t_start) & (t_test <= t_end)
@@ -291,12 +260,11 @@ if __name__ == "__main__":
             w_mean_iv = np.mean(w_pred_reshape, axis=0)
             w_std_iv = np.std(w_pred_reshape, axis=0)
 
-            # Place into full arrays
             t_test_indices = np.where(t_test_mask)[0]
             w_mean_full[:, t_test_indices] = w_mean_iv
             w_std_full[:, t_test_indices] = w_std_iv
 
-        # Get IC for next interval: predict at t_end for training x locations
+        # IC for next interval
         x_ic_next = x[:, None] if x.ndim == 1 else x
         t_ic_next = np.full_like(x_ic_next, t_end, dtype=np.float32)
         xt_boundary = np.concatenate([x_ic_next.astype(np.float32), t_ic_next], axis=-1)
@@ -312,7 +280,7 @@ if __name__ == "__main__":
     w_mean = w_mean_full
     w_std = w_std_full
 
-    # ── Plot 1: Spacetime heatmaps (mean, uncertainty, reference) ────────────
+    # ── Plot 1: Spacetime heatmaps ────────────────────────────────────────────
     w_upper = w_mean + 2 * w_std
     w_lower = w_mean - 2 * w_std
     vmin = min(w_mean.min(), w_d_test.min())
@@ -326,15 +294,15 @@ if __name__ == "__main__":
     plt.colorbar(im0, ax=axes[0], label='Displacement')
     axes[0].set_xlabel('Time t', labelpad=5)
     axes[0].set_ylabel('Position x', labelpad=5)
-    axes[0].set_title('Mean Prediction', pad=15)
+    axes[0].set_title('VI Mean Prediction', pad=15)
 
     im1 = axes[1].imshow(2 * w_std, aspect='auto', origin='lower',
                          extent=[t_test.min(), t_test.max(), x_test.min(), x_test.max()],
                          cmap='Oranges', vmin=0)
-    plt.colorbar(im1, ax=axes[1], label='Width (2σ)')
+    plt.colorbar(im1, ax=axes[1], label='Width (2sigma)')
     axes[1].set_xlabel('Time t', labelpad=5)
     axes[1].set_ylabel('Position x', labelpad=5)
-    axes[1].set_title('Uncertainty (95% CI Width)', pad=15)
+    axes[1].set_title('VI Uncertainty (95% CI Width)', pad=15)
 
     im2 = axes[2].imshow(w_d_test, aspect='auto', origin='lower',
                          extent=[t_test.min(), t_test.max(), x_test.min(), x_test.max()],
@@ -344,17 +312,16 @@ if __name__ == "__main__":
     axes[2].set_ylabel('Position x', labelpad=5)
     axes[2].set_title('Reference Data', pad=15)
 
-    # Show interval boundaries
     for ax in axes:
         for tb in t_boundaries[1:-1]:
             ax.axvline(x=tb, color='white', linestyle='--', linewidth=2, alpha=0.7)
 
     plt.tight_layout()
-    plt.savefig("cantilever_bpinn_heatmap.png", dpi=150)
-    plt.savefig("cantilever_bpinn_heatmap.pdf")
+    plt.savefig("cantilever_vi_heatmap.png", dpi=150)
+    plt.savefig("cantilever_vi_heatmap.pdf")
     plt.show()
 
-    # ── Plot 2: Interval comparison at specific time slices ────────────────
+    # ── Plot 2: Interval comparison at time slices ────────────────────────────
     from matplotlib.lines import Line2D
     from matplotlib.patches import Patch
 
@@ -366,27 +333,20 @@ if __name__ == "__main__":
         if idx >= len(axes):
             break
         ax = axes[idx]
-
-        # Find nearest test time index
         t_idx = np.argmin(np.abs(t_test - t_val))
 
-        # Plot uncertainty interval
         ax.fill_between(x_test, w_lower[:, t_idx], w_upper[:, t_idx],
                         alpha=0.3, color='blue', label='95% CI')
         ax.plot(x_test, w_mean[:, t_idx], 'k-', linewidth=2, label='Mean')
         ax.plot(x_test, w_lower[:, t_idx], 'k--', linewidth=1, alpha=0.7)
         ax.plot(x_test, w_upper[:, t_idx], 'k--', linewidth=1, alpha=0.7)
-
-        # Reference data
         ax.plot(x_test, w_d_test[:, t_idx], 'r.', markersize=6, label='Reference')
 
-        # Training data at nearest time
         t_train_idx = np.argmin(np.abs(t - t_test[t_idx]))
         if np.abs(t[t_train_idx] - t_test[t_idx]) < (t[1] - t[0]):
             ax.scatter(x, w_d[:, t_train_idx], c='#00ff55', s=55,
                        marker='s', edgecolors='k', linewidths=0.3, label='Train', zorder=5)
 
-        # Determine which PINN covers this time
         pinn_idx = n_intervals - 1
         for j, (ts, te) in enumerate(time_intervals):
             if ts <= t_test[t_idx] <= te:
@@ -395,7 +355,7 @@ if __name__ == "__main__":
 
         ax.set_xlabel('Position x')
         ax.set_ylabel('Displacement w')
-        ax.set_title(f't = {t_test[t_idx]:.3f} (PINN #{pinn_idx+1})')
+        ax.set_title(f't = {t_test[t_idx]:.3f} (VI #{pinn_idx+1})')
         ax.grid(True, alpha=0.3)
 
     legend_handles = [
@@ -410,6 +370,6 @@ if __name__ == "__main__":
     fig.legend(handles=legend_handles, loc='lower center',
                ncol=5, bbox_to_anchor=(0.5, -0.04))
     plt.tight_layout(rect=[0, 0.06, 1, 1])
-    plt.savefig("cantilever_bpinn_intervals.png", dpi=150, bbox_inches='tight')
-    plt.savefig("cantilever_bpinn_intervals.pdf", bbox_inches='tight')
+    plt.savefig("cantilever_vi_intervals.png", dpi=150, bbox_inches='tight')
+    plt.savefig("cantilever_vi_intervals.pdf", bbox_inches='tight')
     plt.show()
