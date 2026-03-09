@@ -213,7 +213,7 @@ def train_interval_pinn(x, t_interval, w_d_interval, x_ic_pts, w_ic_targets,
     model = neuq.models.Model(processes=[process_w], likelihoods=likelihoods)
     method = neuq.inferences.HMC(
         num_samples=num_samples, num_burnin=num_burnin,
-        init_time_step=0.01, leapfrog_step=50, seed=seed,
+        init_time_step=0.1, leapfrog_step=5, seed=seed,
     )
     model.compile(method)
     samples, results = model.run()
@@ -231,8 +231,8 @@ if __name__ == "__main__":
     sigma_pde = 0.01   # noise std for PDE residual likelihood
     sigma_bc = 0.01    # noise std for BC likelihoods
     sigma_ic = 0.01    # noise std for IC likelihoods
-    num_samples = 1000
-    num_burnin = 1000
+    num_samples = 100
+    num_burnin = 0
     n_intervals = 3
 
     # ── Load data ─────────────────────────────────────────────────────────────
@@ -307,6 +307,7 @@ if __name__ == "__main__":
             'model': model, 'process': process_w, 'samples': samples,
             't_start': t_start, 't_end': t_end,
         })
+        break
 
     # ── Postprocessing ────────────────────────────────────────────────────────
     w_mean = w_mean_full
@@ -350,8 +351,8 @@ if __name__ == "__main__":
             ax.axvline(x=tb, color='white', linestyle='--', linewidth=2, alpha=0.7)
 
     plt.tight_layout()
-    plt.savefig("cantilever_bpinn_heatmap.png", dpi=150)
-    plt.savefig("cantilever_bpinn_heatmap.pdf")
+    plt.savefig("results_hmc/cantilever_bpinn_heatmap.png", dpi=150)
+    # plt.savefig("results_hmc/cantilever_bpinn_heatmap.pdf")
     plt.show()
 
     # ── Plot 2: Interval comparison at specific time slices ────────────────
@@ -410,6 +411,6 @@ if __name__ == "__main__":
     fig.legend(handles=legend_handles, loc='lower center',
                ncol=5, bbox_to_anchor=(0.5, -0.04))
     plt.tight_layout(rect=[0, 0.06, 1, 1])
-    plt.savefig("cantilever_bpinn_intervals.png", dpi=150, bbox_inches='tight')
-    plt.savefig("cantilever_bpinn_intervals.pdf", bbox_inches='tight')
+    plt.savefig("results_hmc/cantilever_bpinn_intervals.png", dpi=150, bbox_inches='tight')
+    # plt.savefig("results_hmc/cantilever_bpinn_intervals.pdf", bbox_inches='tight')
     plt.show()
