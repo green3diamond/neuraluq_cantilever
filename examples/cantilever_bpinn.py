@@ -231,8 +231,8 @@ if __name__ == "__main__":
     sigma_pde = 0.01   # noise std for PDE residual likelihood
     sigma_bc = 0.01    # noise std for BC likelihoods
     sigma_ic = 0.01    # noise std for IC likelihoods
-    num_samples = 100
-    num_burnin = 0
+    num_samples = 15000
+    num_burnin = 2000
     n_intervals = 3
 
     # ── Load data ─────────────────────────────────────────────────────────────
