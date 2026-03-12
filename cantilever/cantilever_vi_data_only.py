@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt
 
 
 # ── Output directory ─────────────────────────────────────────────────────────
-RESULTS_DIR = "results_data_no_ic"
+RESULTS_DIR = sys.argv[2] if len(sys.argv) > 2 else "results_data_no_ic_tst"
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
 
@@ -83,25 +83,6 @@ def make_pde_fn(L, EI, mu, c, P, f):
     return pde_fn
 
 
-def bc_slope_fn(xt, w):
-    return tf.gradients(w, xt)[0][..., 0:1]
-
-
-def bc_moment_fn(xt, w):
-    w_x = tf.gradients(w, xt)[0][..., 0:1]
-    return tf.gradients(w_x, xt)[0][..., 0:1]
-
-
-def bc_shear_fn(xt, w):
-    w_x = tf.gradients(w, xt)[0][..., 0:1]
-    w_xx = tf.gradients(w_x, xt)[0][..., 0:1]
-    return tf.gradients(w_xx, xt)[0][..., 0:1]
-
-
-def ic_velocity_fn(xt, w):
-    return tf.gradients(w, xt)[0][..., 1:2]
-
-
 # ── Collocation / BC / IC point generation ────────────────────────────────────
 def generate_collocation_points(n_pde, n_bc, n_ic, t_start, t_end, L):
     x_pde = np.random.uniform(0, L, (n_pde, 1)).astype(np.float32)
@@ -158,28 +139,15 @@ def compute_sigmas(L, EI, mu, F_tip):
     }
 
 
-def train_interval_vi(x, t_interval, w_d_interval, x_ic_pts, w_ic_targets,
-                      layers, n_pde, n_bc, n_ic, sigmas, pde_fn,
-                      L, vi_batch_size, num_samples, num_iterations):
+def train_interval_vi(x, t_interval, w_d_interval, 
+                      layers, sigmas, 
+                      vi_batch_size, num_samples, num_iterations):
     """Train a VI B-PINN on a single time interval with physical loss coefficients."""
-    t_start, t_end = t_interval.min(), t_interval.max()
 
     # Flatten data
     xx, tt = np.meshgrid(x, t_interval, indexing='ij')
     xt_data = np.stack([xx.ravel(), tt.ravel()], axis=-1).astype(np.float32)
     w_data = w_d_interval.ravel()[:, None].astype(np.float32)
-
-    # Collocation points
-    xt_pde, xt_left, xt_right, xt_ic = generate_collocation_points(
-        n_pde, n_bc, n_ic, t_start, t_end, L)
-    zeros_pde = np.zeros((n_pde, 1), dtype=np.float32)
-    zeros_bc = np.zeros((n_bc, 1), dtype=np.float32)
-    zeros_ic = np.zeros((n_ic, 1), dtype=np.float32)
-
-    # IC data points
-    x_ic_data = x_ic_pts[:, None] if x_ic_pts.ndim == 1 else x_ic_pts
-    t_ic_data = np.full_like(x_ic_data, t_start, dtype=np.float32)
-    xt_ic_data = np.concatenate([x_ic_data.astype(np.float32), t_ic_data], axis=-1)    
 
     # VI requires both prior and variational posterior
     prior = neuq.variables.fnn.Samplable(layers=layers, mean=0, sigma=1)
@@ -197,12 +165,6 @@ def train_interval_vi(x, t_interval, w_d_interval, x_ic_pts, w_ic_targets,
         neuq.likelihoods.Normal(inputs=xt_data, targets=w_data,
                                 processes=[process_w], pde=None,
                                 sigma=sigmas['data']),
-        # neuq.likelihoods.Normal(inputs=xt_ic_data, targets=w_ic_targets,
-        #                         processes=[process_w], pde=None,
-        #                         sigma=sigmas['ic_disp']),
-        # neuq.likelihoods.Normal(inputs=xt_ic, targets=zeros_ic,
-        #                         processes=[process_w], pde=ic_velocity_fn,
-        #                         sigma=sigmas['ic_vel']),
     ]
 
     model = neuq.models.Model(processes=[process_w], likelihoods=likelihoods)
@@ -283,9 +245,7 @@ if __name__ == "__main__":
 
         model, process_w, samples = train_interval_vi(
             x=x, t_interval=t_interval, w_d_interval=w_d_interval,
-            x_ic_pts=x, w_ic_targets=w_ic_next,
-            layers=layers, n_pde=n_pde, n_bc=n_bc, n_ic=n_ic,
-            sigmas=sigmas, pde_fn=pde_fn, L=L,
+            layers=layers, sigmas=sigmas,
             vi_batch_size=vi_batch_size, num_samples=num_samples,
             num_iterations=num_iterations,
         )
