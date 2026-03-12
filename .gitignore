@@ -4,3 +4,6 @@ NeuralUQ.egg-info/
 env/
 dist/NeuralUQ-0.1.0b0-py3.7.egg
 dist/NeuralUQ-0.1.0b0-py3.8.egg
+cantilever/results_coeff/
+cantilever/results_*/
+cantilever/test_scenarios/
