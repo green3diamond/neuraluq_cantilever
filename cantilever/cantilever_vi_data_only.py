@@ -7,7 +7,6 @@ import logging
 logging.getLogger("tensorflow").setLevel(logging.ERROR)
 
 import neuraluq as neuq
-import neuraluq.variables as neuq_vars
 from neuraluq.config import tf
 
 import sys
@@ -21,7 +20,7 @@ import matplotlib.pyplot as plt
 
 
 # ── Output directory ─────────────────────────────────────────────────────────
-RESULTS_DIR = sys.argv[2] if len(sys.argv) > 2 else "results_data_no_ic_tst"
+RESULTS_DIR = sys.argv[2] 
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
 
@@ -42,15 +41,15 @@ def load_data(data_file, select_every_nth=1, number_of_modes=1):
     if number_of_modes == 1:
         indexes_x = [0, 50, -1]
     elif number_of_modes == 2:
-        indexes_x = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 99]
+        indexes_x = [0, 20, 40, 60, 80, 99]
     elif number_of_modes == 3:
-        indexes_x = [0, 6, 13, 19, 26, 32, 39, 45, 52, 58, 65, 71, 78, 84, 91, 99]
+        indexes_x = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 99]
     else:
         indexes_x = list(range(len(x_full)))
 
-    t = t_full[indexes_t]
-    x = x_full[indexes_x]
-    w_d = w_d_full[indexes_x][:, indexes_t]
+    t_train = t_full[indexes_t]
+    x_train = x_full[indexes_x]
+    w_d_train = w_d_full[indexes_x][:, indexes_t]
 
     resolved_indexes_x = [i if i >= 0 else len(x_full) + i for i in indexes_x]
     indexes_x_test = [i for i in range(len(x_full)) if i not in resolved_indexes_x]
@@ -63,45 +62,7 @@ def load_data(data_file, select_every_nth=1, number_of_modes=1):
     noise_amplitude = float(data.get('noise_amplitude', 0))
     noise_type = data.get('noise_type', 'unknown')
 
-    return x, t, w_d, x_test, t_test, w_d_test, beam_params, noise_amplitude, noise_type
-
-# ── PDE residual: EI * w_xxxx + mu * w_tt + c * w_t - p(x,t) = 0 ────────────
-def make_pde_fn(L, EI, mu, c, P, f):
-    def pde_fn(xt, w):
-        w_xt = tf.gradients(w, xt)[0]
-        w_x, w_t = w_xt[..., 0:1], w_xt[..., 1:2]
-        w_xx = tf.gradients(w_x, xt)[0][..., 0:1]
-        w_xxx = tf.gradients(w_xx, xt)[0][..., 0:1]
-        w_xxxx = tf.gradients(w_xxx, xt)[0][..., 0:1]
-        w_tt = tf.gradients(w_t, xt)[0][..., 1:2]
-
-        x_coord = xt[..., 0:1]
-        t_coord = xt[..., 1:2]
-        p = -P * tf.sin(np.pi * x_coord / L) * tf.cos(2 * np.pi * f * t_coord)
-
-        return EI * w_xxxx + mu * w_tt + c * w_t - p
-    return pde_fn
-
-
-# ── Collocation / BC / IC point generation ────────────────────────────────────
-def generate_collocation_points(n_pde, n_bc, n_ic, t_start, t_end, L):
-    x_pde = np.random.uniform(0, L, (n_pde, 1)).astype(np.float32)
-    t_pde = np.random.uniform(t_start, t_end, (n_pde, 1)).astype(np.float32)
-    xt_pde = np.concatenate([x_pde, t_pde], axis=-1)
-
-    t_bc = np.random.uniform(t_start, t_end, (n_bc, 1)).astype(np.float32)
-    x_left = np.zeros((n_bc, 1), dtype=np.float32)
-    xt_left = np.concatenate([x_left, t_bc], axis=-1)
-
-    t_bc_r = np.random.uniform(t_start, t_end, (n_bc, 1)).astype(np.float32)
-    x_right = np.full((n_bc, 1), L, dtype=np.float32)
-    xt_right = np.concatenate([x_right, t_bc_r], axis=-1)
-
-    x_ic = np.random.uniform(0, L, (n_ic, 1)).astype(np.float32)
-    t_ic = np.full((n_ic, 1), t_start, dtype=np.float32)
-    xt_ic = np.concatenate([x_ic, t_ic], axis=-1)
-
-    return xt_pde, xt_left, xt_right, xt_ic
+    return x_full, t_full, w_d_full, x_train, t_train, w_d_train, x_test, t_test, w_d_test, beam_params, noise_amplitude, noise_type
 
 
 def compute_sigmas(L, EI, mu, F_tip):
@@ -139,8 +100,8 @@ def compute_sigmas(L, EI, mu, F_tip):
     }
 
 
-def train_interval_vi(x, t_interval, w_d_interval, 
-                      layers, sigmas, 
+def train_interval_vi(x, t_interval, w_d_interval,
+                      layers, sigmas,
                       vi_batch_size, num_samples, num_iterations):
     """Train a VI B-PINN on a single time interval with physical loss coefficients."""
 
@@ -148,6 +109,9 @@ def train_interval_vi(x, t_interval, w_d_interval,
     xx, tt = np.meshgrid(x, t_interval, indexing='ij')
     xt_data = np.stack([xx.ravel(), tt.ravel()], axis=-1).astype(np.float32)
     w_data = w_d_interval.ravel()[:, None].astype(np.float32)
+    
+    print(xt_data.shape)
+    print(w_data.shape)
 
     # VI requires both prior and variational posterior
     prior = neuq.variables.fnn.Samplable(layers=layers, mean=0, sigma=1)
@@ -188,15 +152,15 @@ if __name__ == "__main__":
     n_ic = 100
     vi_batch_size = 64
     num_samples = 5000
-    num_iterations = 100000
+    num_iterations = 1#100000
     n_intervals = 3
     F_tip = -0.013
 
     # ── Load data ─────────────────────────────────────────────────────────────
-    data_file = sys.argv[1] if len(sys.argv) > 1 else "test_NT05_M2_noise003_uniform.npy"
-    data_tag = os.path.splitext(data_file)[0]
-    x, t, w_d, x_test, t_test, w_d_test, beam_params, noise_amplitude, noise_type = load_data(
-        data_file, select_every_nth=2, number_of_modes=2)
+    data_file = sys.argv[1]
+    data_tag = os.path.splitext(os.path.basename(data_file))[0]
+    x_full, t_full, w_d_full, x_train, t_train, w_d_train, x_test, t_test, w_d_test, beam_params, noise_amplitude, noise_type = load_data(
+        data_file, select_every_nth=20, number_of_modes=2)
 
     L = float(beam_params['L'])
     EI = float(beam_params['EI'])
@@ -217,21 +181,13 @@ if __name__ == "__main__":
     for k, v in sigmas.items():
         print(f"  {k:20s}: {v:.6f}")
 
-    pde_fn = make_pde_fn(L, EI, mu, c, P, f)
-
     n_x_test = len(x_test)
     n_t_test = len(t_test)
 
     # ── Split time into intervals ─────────────────────────────────────────────
-    t_boundaries = np.linspace(t.min(), t.max(), n_intervals + 1)
+    t_boundaries = np.linspace(t_full.min(), t_full.max(), n_intervals + 1)
     time_intervals = [(t_boundaries[i], t_boundaries[i + 1]) for i in range(n_intervals)]
     print(f"\nTime intervals: {time_intervals}")
-    print(f"\nTime intervals: {time_intervals}")
-
-    w_ic_next = w_d[:, 0:1].astype(np.float32)
-
-    w_mean_full = np.zeros((n_x_test, n_t_test))
-    w_std_full = np.zeros((n_x_test, n_t_test))
     models_info = []
 
     for iv, (t_start, t_end) in enumerate(time_intervals):
@@ -239,58 +195,42 @@ if __name__ == "__main__":
         print(f"Interval {iv+1}/{n_intervals}: t in [{t_start:.4f}, {t_end:.4f}]")
         print(f"{'='*60}")
 
-        t_mask = (t >= t_start) & (t <= t_end)
-        t_interval = t[t_mask]
-        w_d_interval = w_d[:, t_mask]
+        t_mask = (t_train >= t_start) & (t_train <= t_end)
+        t_interval = t_train[t_mask]
+        w_d_interval = w_d_train[:, t_mask]
 
         model, process_w, samples = train_interval_vi(
-            x=x, t_interval=t_interval, w_d_interval=w_d_interval,
+            x=x_train, t_interval=t_interval, w_d_interval=w_d_interval,
             layers=layers, sigmas=sigmas,
             vi_batch_size=vi_batch_size, num_samples=num_samples,
             num_iterations=num_iterations,
         )
-
-        # Predict on test points within this interval
-        t_test_mask = (t_test >= t_start) & (t_test <= t_end)
-        t_test_interval = t_test[t_test_mask]
-
-        if len(t_test_interval) > 0:
-            xx_ti, tt_ti = np.meshgrid(x_test, t_test_interval, indexing='ij')
-            xt_test_iv = np.stack([xx_ti.ravel(), tt_ti.ravel()], axis=-1).astype(np.float32)
-
-            (w_pred_iv,) = model.predict(xt_test_iv, samples, processes=[process_w])
-            n_t_iv = len(t_test_interval)
-            w_pred_reshape = w_pred_iv.reshape([-1, n_x_test, n_t_iv])
-            w_mean_iv = np.mean(w_pred_reshape, axis=0)
-            w_std_iv = np.std(w_pred_reshape, axis=0)
-
-            t_test_indices = np.where(t_test_mask)[0]
-            w_mean_full[:, t_test_indices] = w_mean_iv
-            w_std_full[:, t_test_indices] = w_std_iv
-
-        # IC for next interval
-        x_ic_next = x[:, None] if x.ndim == 1 else x
-        t_ic_next = np.full_like(x_ic_next, t_end, dtype=np.float32)
-        xt_boundary = np.concatenate([x_ic_next.astype(np.float32), t_ic_next], axis=-1)
-        (w_boundary,) = model.predict(xt_boundary, samples, processes=[process_w])
-        w_ic_next = np.mean(w_boundary, axis=0).reshape(-1, 1).astype(np.float32)
-
         models_info.append({
             'model': model, 'process': process_w, 'samples': samples,
             't_start': t_start, 't_end': t_end,
         })
         
-    # ── Postprocessing ────────────────────────────────────────────────────────
-    w_mean = w_mean_full
-    w_std = w_std_full
+    # ── Metrics (on test data only) ─────────────────────────────────────────
+    w_mean_test = np.zeros((n_x_test, n_t_test))
+    w_std_test = np.zeros((n_x_test, n_t_test))
 
-    # ── Metrics ──────────────────────────────────────────────────────────────
+    for mi in models_info:
+        t_mask = (t_test >= mi['t_start']) & (t_test <= mi['t_end'])
+        t_test_iv = t_test[t_mask]
+        xx_ti, tt_ti = np.meshgrid(x_test, t_test_iv, indexing='ij')
+        xt_pts = np.stack([xx_ti.ravel(), tt_ti.ravel()], axis=-1).astype(np.float32)
+        (w_pred,) = mi['model'].predict(xt_pts, mi['samples'], processes=[mi['process']])
+        w_pred_reshape = w_pred.reshape([-1, n_x_test, len(t_test_iv)])
+        t_indices = np.where(t_mask)[0]
+        w_mean_test[:, t_indices] = np.mean(w_pred_reshape, axis=0)
+        w_std_test[:, t_indices] = np.std(w_pred_reshape, axis=0)
+
     target = w_d_test
-    width = 2 * w_std  # half-width of 95% CI
-    abs_diff = np.abs(target - w_mean)
+    width = 2 * w_std_test
+    abs_diff = np.abs(target - w_mean_test)
 
     mae = float(np.mean(abs_diff))
-    rmse = float(np.sqrt(np.mean((target - w_mean) ** 2)))
+    rmse = float(np.sqrt(np.mean((target - w_mean_test) ** 2)))
     distance_to_boundary = float(np.mean(np.maximum(abs_diff - width, 0.0)))
     distance_from_boundary = float(np.mean(np.maximum(width - abs_diff, 0.0)))
     boundary_width = float(np.mean(2 * width))
@@ -325,52 +265,94 @@ if __name__ == "__main__":
         f.write(metrics_txt)
     print(f"Metrics saved to {metrics_path}")
 
-    # ── Plot 1: Spacetime heatmaps ────────────────────────────────────────────
-    w_upper = w_mean + 2 * w_std
-    w_lower = w_mean - 2 * w_std
-    vmin = min(w_mean.min(), w_d_test.min())
-    vmax = max(w_mean.max(), w_d_test.max())
+    # ── Plot 1: Spacetime heatmaps on dense regular grid ────────────────────
+    t_max = time_intervals[-1][1]
+    n_x_hm, n_t_hm = 100, 200
+    x_hm = np.linspace(0, L, n_x_hm)
+    t_hm = np.linspace(0, t_max, n_t_hm)
+
+    w_mean_hm = np.zeros((n_x_hm, n_t_hm))
+    w_std_hm = np.zeros((n_x_hm, n_t_hm))
+    for mi in models_info:
+        t_mask = (t_hm >= mi['t_start']) & (t_hm <= mi['t_end'])
+        t_hm_iv = t_hm[t_mask]
+        if len(t_hm_iv) == 0:
+            continue
+        xx_ti, tt_ti = np.meshgrid(x_hm, t_hm_iv, indexing='ij')
+        xt_pts = np.stack([xx_ti.ravel(), tt_ti.ravel()], axis=-1).astype(np.float32)
+        (w_pred,) = mi['model'].predict(xt_pts, mi['samples'], processes=[mi['process']])
+        w_pred_reshape = w_pred.reshape([-1, n_x_hm, len(t_hm_iv)])
+        t_indices = np.where(t_mask)[0]
+        w_mean_hm[:, t_indices] = np.mean(w_pred_reshape, axis=0)
+        w_std_hm[:, t_indices] = np.std(w_pred_reshape, axis=0)
 
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
 
-    im0 = axes[0].imshow(w_mean, aspect='auto', origin='lower',
-                         extent=[t_test.min(), t_test.max(), x_test.min(), x_test.max()],
-                         cmap='RdBu_r', vmin=vmin, vmax=vmax)
+    im0 = axes[0].imshow(w_mean_hm, aspect='auto', origin='lower',
+                         extent=[0, t_max, 0, L], cmap='RdBu_r')
+    for i, (t_start, t_end) in enumerate(time_intervals):
+        if i > 0:
+            axes[0].axvline(x=t_start, color='white', linestyle='--', linewidth=2, alpha=0.7)
     plt.colorbar(im0, ax=axes[0], label='Displacement')
     axes[0].set_xlabel('Time t', labelpad=5)
     axes[0].set_ylabel('Position x', labelpad=5)
-    axes[0].set_title('VI (coeff) Mean Prediction', pad=15)
+    axes[0].set_title('VI Mean Prediction', pad=15)
 
-    im1 = axes[1].imshow(2 * w_std, aspect='auto', origin='lower',
-                         extent=[t_test.min(), t_test.max(), x_test.min(), x_test.max()],
-                         cmap='Oranges', vmin=0)
+    im1 = axes[1].imshow(2 * w_std_hm, aspect='auto', origin='lower',
+                         extent=[0, t_max, 0, L], cmap='Oranges', vmin=0)
+    for i, (t_start, t_end) in enumerate(time_intervals):
+        if i > 0:
+            axes[1].axvline(x=t_start, color='white', linestyle='--', linewidth=2, alpha=0.7)
     plt.colorbar(im1, ax=axes[1], label='Width (2sigma)')
     axes[1].set_xlabel('Time t', labelpad=5)
     axes[1].set_ylabel('Position x', labelpad=5)
-    axes[1].set_title('VI (coeff) Uncertainty (95% CI Width)', pad=15)
+    axes[1].set_title('VI Uncertainty (95% CI Width)', pad=15)
 
-    im2 = axes[2].imshow(w_d_test, aspect='auto', origin='lower',
-                         extent=[t_test.min(), t_test.max(), x_test.min(), x_test.max()],
-                         cmap='RdBu_r', vmin=vmin, vmax=vmax)
+    im2 = axes[2].imshow(w_d_train, aspect='auto', origin='lower',
+                         extent=[0, t_max, 0, L], cmap='RdBu_r')
     plt.colorbar(im2, ax=axes[2], label='Displacement')
     axes[2].set_xlabel('Time t', labelpad=5)
     axes[2].set_ylabel('Position x', labelpad=5)
-    axes[2].set_title('Reference Data', pad=15)
-
-    for ax in axes:
-        for tb in t_boundaries[1:-1]:
-            ax.axvline(x=tb, color='white', linestyle='--', linewidth=2, alpha=0.7)
+    axes[2].set_title('Original Noisy Data', pad=15)
 
     plt.tight_layout()
     plt.savefig(os.path.join(RESULTS_DIR, f"{data_tag}_vi_heatmap.png"), dpi=150)
     plt.savefig(os.path.join(RESULTS_DIR, f"{data_tag}_vi_heatmap.pdf"))
     plt.show()
 
-    # ── Plot 2: Interval comparison at time slices ────────────────────────────
+    # ── Plot 2: Comparison at time slices ─────────────────────────────────────
     from matplotlib.lines import Line2D
-    from matplotlib.patches import Patch
 
-    time_points = np.linspace(t_test.min(), t_test.max(), 6)
+    time_points = np.stack([
+        t_train[0],
+        (t_train[1] + t_train[2]) / 2,
+        t_train[4],
+        (t_train[5] + t_train[6]) / 2,
+        t_train[8],
+        (t_train[9] + t_train[10]) / 2,
+    ])
+
+    n_x_plot = len(x_full)
+
+    # Batch-predict for all time_points: group by interval
+    tp_mean = np.zeros((n_x_plot, len(time_points)))
+    tp_std = np.zeros((n_x_plot, len(time_points)))
+    tp_model_idx = np.full(len(time_points), len(models_info) - 1, dtype=int)
+
+    for j, mi in enumerate(models_info):
+        tp_mask = (time_points >= mi['t_start']) & (time_points <= mi['t_end'])
+        tp_iv = time_points[tp_mask]
+        if len(tp_iv) == 0:
+            continue
+        tp_model_idx[tp_mask] = j
+        xx_ti, tt_ti = np.meshgrid(x_full, tp_iv, indexing='ij')
+        xt_pts = np.stack([xx_ti.ravel(), tt_ti.ravel()], axis=-1).astype(np.float32)
+        (w_pred,) = mi['model'].predict(xt_pts, mi['samples'], processes=[mi['process']])
+        w_pred_reshape = w_pred.reshape([-1, n_x_plot, len(tp_iv)])
+        tp_indices = np.where(tp_mask)[0]
+        tp_mean[:, tp_indices] = np.mean(w_pred_reshape, axis=0)
+        tp_std[:, tp_indices] = np.std(w_pred_reshape, axis=0)
+
     fig, axes = plt.subplots(2, 3, figsize=(15, 10))
     axes = axes.flatten()
 
@@ -378,42 +360,49 @@ if __name__ == "__main__":
         if idx >= len(axes):
             break
         ax = axes[idx]
-        t_idx = np.argmin(np.abs(t_test - t_val))
 
-        ax.fill_between(x_test, w_lower[:, t_idx], w_upper[:, t_idx],
+        w_pred_mean = tp_mean[:, idx]
+        w_pred_std = tp_std[:, idx]
+        w_pred_upper = w_pred_mean + 2 * w_pred_std
+        w_pred_lower = w_pred_mean - 2 * w_pred_std
+
+        # Plot prediction with CI
+        ax.fill_between(x_full, w_pred_lower, w_pred_upper,
                         alpha=0.3, color='blue', label='95% CI')
-        ax.plot(x_test, w_mean[:, t_idx], 'k-', linewidth=2, label='Mean')
-        ax.plot(x_test, w_lower[:, t_idx], 'k--', linewidth=1, alpha=0.7)
-        ax.plot(x_test, w_upper[:, t_idx], 'k--', linewidth=1, alpha=0.7)
-        ax.plot(x_test, w_d_test[:, t_idx], 'r.', markersize=6, label='Reference')
+        ax.plot(x_full, w_pred_mean, 'k-', linewidth=2, label='Mean')
+        ax.plot(x_full, w_pred_lower, 'k--', linewidth=1, alpha=0.7)
+        ax.plot(x_full, w_pred_upper, 'k--', linewidth=1, alpha=0.7)
 
-        t_train_idx = np.argmin(np.abs(t - t_test[t_idx]))
-        if np.abs(t[t_train_idx] - t_test[t_idx]) < (t[1] - t[0]):
-            ax.scatter(x, w_d[:, t_train_idx], c='#00ff55', s=55,
-                       marker='s', edgecolors='k', linewidths=0.3, label='Train', zorder=5)
+        # Plot full ground truth (all x)
+        try:
+            t_full_idx = np.where(t_full == t_val)[0][0]
+        except IndexError:
+            t_full_idx = np.argmin(np.abs(t_full - t_val))
+            print(f"Warning: t_val={t_val:.6f} not in t_full, using closest t={t_full[t_full_idx]:.6f}")
+        ax.scatter(x_full, w_d_full[:, t_full_idx], c='#ff4500', s=20,
+                   edgecolors='k', linewidths=0.2, label='Test', zorder=4)
 
-        pinn_idx = n_intervals - 1
-        for j, (ts, te) in enumerate(time_intervals):
-            if ts <= t_test[t_idx] <= te:
-                pinn_idx = j
-                break
+        # Plot training data points
+        if t_val in t_train:
+            t_train_idx = np.where(t_train == t_val)[0][0]
+            ax.scatter(x_train, w_d_train[:, t_train_idx], c='#00ff55', s=55,
+                        marker='s', edgecolors='k', linewidths=0.3, label='Train', zorder=5)
 
         ax.set_xlabel('Position x')
         ax.set_ylabel('Displacement w')
-        ax.set_title(f't = {t_test[t_idx]:.3f} (VI #{pinn_idx+1})')
+        ax.set_title(f't = {t_val:.3f} (VI #{tp_model_idx[idx]+1})')
         ax.grid(True, alpha=0.3)
 
     legend_handles = [
         Line2D([0], [0], color='black', linewidth=2, label='Mean'),
         Line2D([0], [0], color='black', linewidth=1, linestyle='--', label='Bounds'),
-        Patch(facecolor='blue', alpha=0.3, label='95% CI'),
-        Line2D([0], [0], marker='.', color='w', markerfacecolor='red',
-               markersize=8, label='Reference'),
+        Line2D([0], [0], marker='o', color='w', markerfacecolor='#ff4500',
+               markersize=8, markeredgecolor='black', markeredgewidth=0.2, label='Test data'),
         Line2D([0], [0], marker='s', color='w', markerfacecolor='#00ff55',
                markersize=8, markeredgecolor='black', markeredgewidth=0.3, label='Train data'),
     ]
     fig.legend(handles=legend_handles, loc='lower center',
-               ncol=5, bbox_to_anchor=(0.5, -0.04))
+               ncol=4, bbox_to_anchor=(0.5, -0.04))
     plt.tight_layout(rect=[0, 0.06, 1, 1])
     plt.savefig(os.path.join(RESULTS_DIR, f"{data_tag}_vi_intervals.png"),
                 dpi=150, bbox_inches='tight')
