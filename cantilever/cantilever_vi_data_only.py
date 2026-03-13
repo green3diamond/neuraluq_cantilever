@@ -100,13 +100,20 @@ def compute_sigmas(L, EI, mu, F_tip):
     }
 
 
+def normalize_t(t, t_start, t_end):
+    """Normalize t to [0, 1] within the interval."""
+    return (t - t_start) / (t_end - t_start)
+
+
 def train_interval_vi(x, t_interval, w_d_interval,
                       layers, sigmas,
-                      vi_batch_size, num_samples, num_iterations):
+                      vi_batch_size, num_samples, num_iterations,
+                      t_start, t_end):
     """Train a VI B-PINN on a single time interval with physical loss coefficients."""
 
-    # Flatten data
-    xx, tt = np.meshgrid(x, t_interval, indexing='ij')
+    # Flatten data — normalize t to [0, 1] so all intervals see the same input range
+    t_norm = normalize_t(t_interval, t_start, t_end)
+    xx, tt = np.meshgrid(x, t_norm, indexing='ij')
     xt_data = np.stack([xx.ravel(), tt.ravel()], axis=-1).astype(np.float32)
     w_data = w_d_interval.ravel()[:, None].astype(np.float32)
     
@@ -152,7 +159,7 @@ if __name__ == "__main__":
     n_ic = 100
     vi_batch_size = 64
     num_samples = 5000
-    num_iterations = 1#100000
+    num_iterations = 100000
     n_intervals = 3
     F_tip = -0.013
 
@@ -204,6 +211,7 @@ if __name__ == "__main__":
             layers=layers, sigmas=sigmas,
             vi_batch_size=vi_batch_size, num_samples=num_samples,
             num_iterations=num_iterations,
+            t_start=t_start, t_end=t_end,
         )
         models_info.append({
             'model': model, 'process': process_w, 'samples': samples,
@@ -217,7 +225,8 @@ if __name__ == "__main__":
     for mi in models_info:
         t_mask = (t_test >= mi['t_start']) & (t_test <= mi['t_end'])
         t_test_iv = t_test[t_mask]
-        xx_ti, tt_ti = np.meshgrid(x_test, t_test_iv, indexing='ij')
+        t_test_norm = normalize_t(t_test_iv, mi['t_start'], mi['t_end'])
+        xx_ti, tt_ti = np.meshgrid(x_test, t_test_norm, indexing='ij')
         xt_pts = np.stack([xx_ti.ravel(), tt_ti.ravel()], axis=-1).astype(np.float32)
         (w_pred,) = mi['model'].predict(xt_pts, mi['samples'], processes=[mi['process']])
         w_pred_reshape = w_pred.reshape([-1, n_x_test, len(t_test_iv)])
@@ -278,7 +287,8 @@ if __name__ == "__main__":
         t_hm_iv = t_hm[t_mask]
         if len(t_hm_iv) == 0:
             continue
-        xx_ti, tt_ti = np.meshgrid(x_hm, t_hm_iv, indexing='ij')
+        t_hm_norm = normalize_t(t_hm_iv, mi['t_start'], mi['t_end'])
+        xx_ti, tt_ti = np.meshgrid(x_hm, t_hm_norm, indexing='ij')
         xt_pts = np.stack([xx_ti.ravel(), tt_ti.ravel()], axis=-1).astype(np.float32)
         (w_pred,) = mi['model'].predict(xt_pts, mi['samples'], processes=[mi['process']])
         w_pred_reshape = w_pred.reshape([-1, n_x_hm, len(t_hm_iv)])
@@ -345,7 +355,8 @@ if __name__ == "__main__":
         if len(tp_iv) == 0:
             continue
         tp_model_idx[tp_mask] = j
-        xx_ti, tt_ti = np.meshgrid(x_full, tp_iv, indexing='ij')
+        tp_norm = normalize_t(tp_iv, mi['t_start'], mi['t_end'])
+        xx_ti, tt_ti = np.meshgrid(x_full, tp_norm, indexing='ij')
         xt_pts = np.stack([xx_ti.ravel(), tt_ti.ravel()], axis=-1).astype(np.float32)
         (w_pred,) = mi['model'].predict(xt_pts, mi['samples'], processes=[mi['process']])
         w_pred_reshape = w_pred.reshape([-1, n_x_plot, len(tp_iv)])
