@@ -108,15 +108,22 @@ def normalize_t(t, t_start, t_end):
 def train_interval_vi(x, t_interval, w_d_interval,
                       layers, sigmas,
                       vi_batch_size, num_samples, num_iterations,
-                      t_start, t_end):
-    """Train a VI B-PINN on a single time interval with physical loss coefficients."""
+                      t_start, t_end,
+                      x_ic=None, w_ic_targets=None, ic_sigma=None):
+    """Train a VI B-PINN on a single time interval with physical loss coefficients.
+
+    Args:
+        x_ic: spatial points for IC, shape [n_ic]. If None, no IC likelihood added.
+        w_ic_targets: IC displacement targets, shape [n_ic, 1].
+        ic_sigma: sigma for IC likelihood. If None, uses sigmas['ic_disp'].
+    """
 
     # Flatten data — normalize t to [0, 1] so all intervals see the same input range
     t_norm = normalize_t(t_interval, t_start, t_end)
     xx, tt = np.meshgrid(x, t_norm, indexing='ij')
     xt_data = np.stack([xx.ravel(), tt.ravel()], axis=-1).astype(np.float32)
     w_data = w_d_interval.ravel()[:, None].astype(np.float32)
-    
+
     print(xt_data.shape)
     print(w_data.shape)
 
@@ -137,6 +144,19 @@ def train_interval_vi(x, t_interval, w_d_interval,
                                 processes=[process_w], pde=None,
                                 sigma=sigmas['data']),
     ]
+
+    # IC likelihood: displacement at t_norm=0
+    if x_ic is not None and w_ic_targets is not None:
+        x_ic_col = x_ic[:, None] if x_ic.ndim == 1 else x_ic
+        t_ic_col = np.zeros_like(x_ic_col, dtype=np.float32)  # t_norm=0
+        xt_ic = np.concatenate([x_ic_col.astype(np.float32), t_ic_col], axis=-1)
+        sigma_ic = ic_sigma if ic_sigma is not None else sigmas['ic_disp']
+        print(f"IC points: {xt_ic.shape}, targets: {w_ic_targets.shape}, sigma: {sigma_ic:.6f}")
+        likelihoods.append(
+            neuq.likelihoods.Normal(inputs=xt_ic, targets=w_ic_targets,
+                                    processes=[process_w], pde=None,
+                                    sigma=sigma_ic),
+        )
 
     model = neuq.models.Model(processes=[process_w], likelihoods=likelihoods)
 
@@ -197,6 +217,11 @@ if __name__ == "__main__":
     print(f"\nTime intervals: {time_intervals}")
     models_info = []
 
+    # IC for first interval comes from data at t=0
+    w_ic_next = w_d_full[:, 0:1].astype(np.float32)
+    x_ic = x_full.copy()
+    ic_sigma_next = None  # first interval uses sigmas['ic_disp']
+
     for iv, (t_start, t_end) in enumerate(time_intervals):
         print(f"\n{'='*60}")
         print(f"Interval {iv+1}/{n_intervals}: t in [{t_start:.4f}, {t_end:.4f}]")
@@ -212,11 +237,21 @@ if __name__ == "__main__":
             vi_batch_size=vi_batch_size, num_samples=num_samples,
             num_iterations=num_iterations,
             t_start=t_start, t_end=t_end,
+            x_ic=x_ic, w_ic_targets=w_ic_next, ic_sigma=ic_sigma_next,
         )
         models_info.append({
             'model': model, 'process': process_w, 'samples': samples,
             't_start': t_start, 't_end': t_end,
         })
+
+        # Get IC for next interval: predict at t_norm=1 (end of current interval)
+        x_ic_col = x_ic[:, None] if x_ic.ndim == 1 else x_ic
+        t_ic_col = np.ones_like(x_ic_col, dtype=np.float32)  # t_norm=1 = end of interval
+        xt_boundary = np.concatenate([x_ic_col.astype(np.float32), t_ic_col], axis=-1)
+        (w_boundary,) = model.predict(xt_boundary, samples, processes=[process_w])
+        w_ic_next = np.mean(w_boundary, axis=0).reshape(-1, 1).astype(np.float32)
+        ic_sigma_next = float(np.mean(np.std(w_boundary, axis=0)))
+        print(f"IC for next interval: mean range [{w_ic_next.min():.6f}, {w_ic_next.max():.6f}], sigma={ic_sigma_next:.6f}")
         
     # ── Metrics (on test data only) ─────────────────────────────────────────
     w_mean_test = np.zeros((n_x_test, n_t_test))

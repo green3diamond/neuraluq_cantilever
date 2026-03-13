@@ -3,7 +3,8 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DATA_FILES=($(ls "$SCRIPT_DIR/cantilever/test_scenarios/"*.npy | xargs -n1 basename))
-OUTPUT_FOLDER_NAME="results_data_no_ic_v4"
+# DATA_FILES="test_NT01_M2_noise001_normal.npy"
+OUTPUT_FOLDER_NAME="results_data_no_ic_v10"
 
 for DATA_FILE in "${DATA_FILES[@]}"; do
     TAG="${DATA_FILE%.npy}"
