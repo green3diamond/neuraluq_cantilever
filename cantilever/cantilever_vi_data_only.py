@@ -9,6 +9,7 @@ logging.getLogger("tensorflow").setLevel(logging.ERROR)
 import neuraluq as neuq
 from neuraluq.config import tf
 
+import re
 import sys
 import numpy as np
 import numpy.core
@@ -17,6 +18,16 @@ if not hasattr(np, '_core'):
     sys.modules['numpy._core.multiarray'] = np.core.multiarray
 
 import matplotlib.pyplot as plt
+
+plt.rcParams.update({
+    'font.size':        17,
+    'axes.labelsize':   17,
+    'xtick.labelsize':  17,
+    'ytick.labelsize':  17,
+    'legend.fontsize':  17,
+    'axes.titlesize':   19,
+    'figure.titlesize': 19,
+})
 
 
 # ── Output directory ─────────────────────────────────────────────────────────
@@ -164,6 +175,7 @@ def train_interval_vi(x, t_interval, w_d_interval,
         batch_size=vi_batch_size,
         num_samples=num_samples,
         num_iterations=num_iterations,
+        optimizer=tf.train.AdamOptimizer(3e-4)
     )
     model.compile(method)
     samples = model.run()
@@ -177,17 +189,18 @@ if __name__ == "__main__":
     n_pde = 5000
     n_bc = 300
     n_ic = 100
-    vi_batch_size = 64
+    vi_batch_size = 128
     num_samples = 5000
-    num_iterations = 100000
+    num_iterations = 200000
     n_intervals = 3
     F_tip = -0.013
 
     # ── Load data ─────────────────────────────────────────────────────────────
     data_file = sys.argv[1]
     data_tag = os.path.splitext(os.path.basename(data_file))[0]
+    number_of_modes = int(re.search(r'_M(\d+)_', data_tag).group(1))
     x_full, t_full, w_d_full, x_train, t_train, w_d_train, x_test, t_test, w_d_test, beam_params, noise_amplitude, noise_type = load_data(
-        data_file, select_every_nth=20, number_of_modes=2)
+        data_file, select_every_nth=20, number_of_modes=number_of_modes)
 
     L = float(beam_params['L'])
     EI = float(beam_params['EI'])
@@ -252,7 +265,29 @@ if __name__ == "__main__":
         w_ic_next = np.mean(w_boundary, axis=0).reshape(-1, 1).astype(np.float32)
         ic_sigma_next = float(np.mean(np.std(w_boundary, axis=0)))
         print(f"IC for next interval: mean range [{w_ic_next.min():.6f}, {w_ic_next.max():.6f}], sigma={ic_sigma_next:.6f}")
-        
+
+    # ── Log trained models ────────────────────────────────────────────────────
+    model_log = {
+        'layers': layers,
+        'n_intervals': n_intervals,
+        'num_iterations': num_iterations,
+        'num_samples': num_samples,
+        'vi_batch_size': vi_batch_size,
+        'data_file': data_file,
+        'time_intervals': time_intervals,
+        'intervals': [],
+    }
+    for iv, mi in enumerate(models_info):
+        model_log['intervals'].append({
+            'interval': iv,
+            't_start': mi['t_start'],
+            't_end': mi['t_end'],
+            'samples': mi['samples'],
+        })
+    model_path = os.path.join(RESULTS_DIR, f"{data_tag}_vi_model.npy")
+    np.save(model_path, model_log, allow_pickle=True)
+    print(f"Model logged to {model_path}")
+
     # ── Metrics (on test data only) ─────────────────────────────────────────
     w_mean_test = np.zeros((n_x_test, n_t_test))
     w_std_test = np.zeros((n_x_test, n_t_test))
@@ -334,34 +369,39 @@ if __name__ == "__main__":
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
 
     im0 = axes[0].imshow(w_mean_hm, aspect='auto', origin='lower',
-                         extent=[0, t_max, 0, L], cmap='RdBu_r')
+                         extent=[0, t_max, 0, L], cmap='RdBu_r',
+                         vmin=-0.25, vmax=0.25)
     for i, (t_start, t_end) in enumerate(time_intervals):
         if i > 0:
             axes[0].axvline(x=t_start, color='white', linestyle='--', linewidth=2, alpha=0.7)
-    plt.colorbar(im0, ax=axes[0], label='Displacement')
+    plt.colorbar(im0, ax=axes[0], label='Center')
     axes[0].set_xlabel('Time t', labelpad=5)
     axes[0].set_ylabel('Position x', labelpad=5)
+    axes[0].set_xticks([0.00, 0.05, 0.10])
     axes[0].set_title('VI Mean Prediction', pad=15)
 
     im1 = axes[1].imshow(2 * w_std_hm, aspect='auto', origin='lower',
-                         extent=[0, t_max, 0, L], cmap='Oranges', vmin=0)
+                         extent=[0, t_max, 0, L], cmap='Oranges', 
+                         vmin=0, vmax=0.25)
     for i, (t_start, t_end) in enumerate(time_intervals):
         if i > 0:
             axes[1].axvline(x=t_start, color='white', linestyle='--', linewidth=2, alpha=0.7)
-    plt.colorbar(im1, ax=axes[1], label='Width (2sigma)')
+    plt.colorbar(im1, ax=axes[1], label='Width')
     axes[1].set_xlabel('Time t', labelpad=5)
     axes[1].set_ylabel('Position x', labelpad=5)
-    axes[1].set_title('VI Uncertainty (95% CI Width)', pad=15)
+    axes[1].set_xticks([0.00, 0.05, 0.10])
+    axes[1].set_title('VI Uncertainty', pad=15)
 
     im2 = axes[2].imshow(w_d_train, aspect='auto', origin='lower',
-                         extent=[0, t_max, 0, L], cmap='RdBu_r')
+                         extent=[0, t_max, 0, L], cmap='RdBu_r',
+                         vmin=-0.25, vmax=0.25)
     plt.colorbar(im2, ax=axes[2], label='Displacement')
     axes[2].set_xlabel('Time t', labelpad=5)
     axes[2].set_ylabel('Position x', labelpad=5)
+    axes[2].set_xticks([0.00, 0.05, 0.10])
     axes[2].set_title('Original Noisy Data', pad=15)
 
     plt.tight_layout()
-    plt.savefig(os.path.join(RESULTS_DIR, f"{data_tag}_vi_heatmap.png"), dpi=150)
     plt.savefig(os.path.join(RESULTS_DIR, f"{data_tag}_vi_heatmap.pdf"))
     plt.show()
 
@@ -428,6 +468,11 @@ if __name__ == "__main__":
         ax.scatter(x_full, w_d_full[:, t_full_idx], c='#ff4500', s=20,
                    edgecolors='k', linewidths=0.2, label='Test', zorder=4)
 
+        # Plot IC data at t=0
+        if t_val == t_full[0]:
+            ax.scatter(x_full, w_d_full[:, 0], c='blue', s=25,
+                       edgecolors='k', linewidths=0.2, label='IC', zorder=5)
+
         # Plot training data points
         if t_val in t_train:
             t_train_idx = np.where(t_train == t_val)[0][0]
@@ -442,16 +487,16 @@ if __name__ == "__main__":
     legend_handles = [
         Line2D([0], [0], color='black', linewidth=2, label='Mean'),
         Line2D([0], [0], color='black', linewidth=1, linestyle='--', label='Bounds'),
+        Line2D([0], [0], marker='o', color='w', markerfacecolor='blue',
+               markersize=8, markeredgecolor='black', markeredgewidth=0.2, label='IC data'),
         Line2D([0], [0], marker='o', color='w', markerfacecolor='#ff4500',
                markersize=8, markeredgecolor='black', markeredgewidth=0.2, label='Test data'),
         Line2D([0], [0], marker='s', color='w', markerfacecolor='#00ff55',
                markersize=8, markeredgecolor='black', markeredgewidth=0.3, label='Train data'),
     ]
     fig.legend(handles=legend_handles, loc='lower center',
-               ncol=4, bbox_to_anchor=(0.5, -0.04))
+               ncol=5, bbox_to_anchor=(0.5, -0.04))
     plt.tight_layout(rect=[0, 0.06, 1, 1])
-    plt.savefig(os.path.join(RESULTS_DIR, f"{data_tag}_vi_intervals.png"),
-                dpi=150, bbox_inches='tight')
     plt.savefig(os.path.join(RESULTS_DIR, f"{data_tag}_vi_intervals.pdf"),
                 bbox_inches='tight')
     plt.show()
