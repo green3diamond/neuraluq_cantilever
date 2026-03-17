@@ -191,7 +191,7 @@ if __name__ == "__main__":
     n_ic = 100
     vi_batch_size = 128
     num_samples = 5000
-    num_iterations = 200000
+    num_iterations = 1#200000
     n_intervals = 3
     F_tip = -0.013
 
@@ -305,7 +305,7 @@ if __name__ == "__main__":
         w_std_test[:, t_indices] = np.std(w_pred_reshape, axis=0)
 
     target = w_d_test
-    width = 2 * w_std_test
+    width = 3 * w_std_test
     abs_diff = np.abs(target - w_mean_test)
 
     mae = float(np.mean(abs_diff))
@@ -380,7 +380,7 @@ if __name__ == "__main__":
     axes[0].set_xticks([0.00, 0.05, 0.10])
     axes[0].set_title('VI Mean Prediction', pad=15)
 
-    im1 = axes[1].imshow(2 * w_std_hm, aspect='auto', origin='lower',
+    im1 = axes[1].imshow(3 * w_std_hm, aspect='auto', origin='lower',
                          extent=[0, t_max, 0, L], cmap='Oranges', 
                          vmin=0, vmax=0.25)
     for i, (t_start, t_end) in enumerate(time_intervals):
@@ -449,8 +449,8 @@ if __name__ == "__main__":
 
         w_pred_mean = tp_mean[:, idx]
         w_pred_std = tp_std[:, idx]
-        w_pred_upper = w_pred_mean + 2 * w_pred_std
-        w_pred_lower = w_pred_mean - 2 * w_pred_std
+        w_pred_upper = w_pred_mean + 3 * w_pred_std
+        w_pred_lower = w_pred_mean - 3 * w_pred_std
 
         # Plot prediction with CI
         ax.fill_between(x_full, w_pred_lower, w_pred_upper,
