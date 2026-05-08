@@ -191,7 +191,7 @@ if __name__ == "__main__":
     n_ic = 100
     vi_batch_size = 128
     num_samples = 5000
-    num_iterations = 1#200000
+    num_iterations = 200000
     n_intervals = 3
     F_tip = -0.013
 

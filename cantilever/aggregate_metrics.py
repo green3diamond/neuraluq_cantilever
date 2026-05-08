@@ -6,9 +6,9 @@ import numpy as np
 
 RESULTS_DIR = os.path.dirname(os.path.abspath(__file__))
 FOLDERS = [
-    os.path.join(RESULTS_DIR, "results_data_no_ic_v4"),
-    os.path.join(RESULTS_DIR, "results_data_no_ic_v5"),
-    os.path.join(RESULTS_DIR, "results_data_no_ic_v6"),
+    os.path.join(RESULTS_DIR, "results_data_no_ic_v15"),
+    os.path.join(RESULTS_DIR, "results_data_no_ic_v16"),
+    os.path.join(RESULTS_DIR, "results_data_no_ic_v17"),
 ]
 
 METRICS = [
@@ -39,26 +39,44 @@ def parse_metrics(filepath):
     return metrics
 
 
+NOISE_TYPES = ["normal", "uniform", "beta"]
+
+
+def get_noise_type(filepath):
+    """Extract noise type from filename."""
+    basename = os.path.basename(filepath)
+    for noise in NOISE_TYPES:
+        if f"_{noise}_" in basename:
+            return noise
+    return "unknown"
+
+
 def main():
-    # Collect all metric values
-    all_metrics = {m: [] for m in METRICS}
+    # Collect metric values per noise type
+    all_metrics = {noise: {m: [] for m in METRICS} for noise in NOISE_TYPES}
 
     for folder in FOLDERS:
         files = sorted(glob.glob(os.path.join(folder, "*_vi_metrics.txt")))
         for filepath in files:
+            noise = get_noise_type(filepath)
+            if noise not in all_metrics:
+                continue
             metrics = parse_metrics(filepath)
             for m in METRICS:
                 if m in metrics:
-                    all_metrics[m].append(metrics[m])
+                    all_metrics[noise][m].append(metrics[m])
 
-    # Compute and print mean/std
-    print(f"{'Metric':<25} {'Mean':>12} {'Std':>12}  {'N':>4}")
-    print("-" * 57)
-    for m in METRICS:
-        values = np.array(all_metrics[m])
-        print(f"{m:<25} {values.mean():>12.6f} {values.std():>12.6f}  {len(values):>4}")
-
-    print(f"\nTotal files processed: {sum(len(v) for v in all_metrics.values()) // len(METRICS)}")
+    # Compute and print mean/std per noise type
+    for noise in NOISE_TYPES:
+        print(f"\nNoise type: {noise}")
+        print(f"{'Metric':<25} {'Mean':>12} {'Std':>12}  {'N':>4}")
+        print("-" * 57)
+        for m in METRICS:
+            values = np.array(all_metrics[noise][m])
+            if len(values) == 0:
+                print(f"{m:<25} {'N/A':>12} {'N/A':>12}  {0:>4}")
+            else:
+                print(f"{m:<25} {values.mean():>12.6f} {values.std():>12.6f}  {len(values):>4}")
 
 
 if __name__ == "__main__":
