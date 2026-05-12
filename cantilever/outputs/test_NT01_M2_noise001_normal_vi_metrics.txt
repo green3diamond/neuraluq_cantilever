@@ -1,0 +1,16 @@
+data_file:              test_scenarios/test_NT01_M2_noise001_normal.npy
+noise_type:             normal
+noise_amplitude:        0.01
+n_intervals:            3
+num_iterations:         10000
+num_samples:            200
+vi_batch_size:          64
+layers:                 [2, 50, 50, 50, 2]
+
+mae:                    0.128325
+rmse:                   0.257073
+distance_to_boundary:   0.119564
+distance_from_boundary: 0.000436
+boundary_width:         0.018394
+width_vs_noise_ratio:   1.839
+fraction_outside:       0.9641

@@ -1,0 +1,30 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug cantilever_vi (ml env)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/cantilever/cantilever_vi.py",
+            "args": [
+                "test_scenarios/test_NT01_M2_noise001_normal.npy",
+                "outputs"
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}/cantilever",
+            "python": "/Users/zlatandimitrov/anaconda3/envs/ml/bin/python",
+            "pythonArgs": ["-u"],
+            "justMyCode": false
+        },
+        {
+            "name": "Python Debugger: Current File",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal"
+        }
+    ]
+}

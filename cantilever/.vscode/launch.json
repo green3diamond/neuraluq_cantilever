@@ -1,0 +1,20 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug cantilever_vi (ml env)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/cantilever_vi.py",
+      "args": [
+        "test_scenarios/test_NT01_M2_noise001_normal.npy",
+        "outputs"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "python": "/Users/zlatandimitrov/anaconda3/envs/ml/bin/python",
+      "pythonArgs": ["-u"],
+      "justMyCode": false
+    }
+  ]
+}
